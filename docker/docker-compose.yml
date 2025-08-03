@@ -1,0 +1,132 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: chess_rl
+      POSTGRES_USER: chess_user
+      POSTGRES_PASSWORD: chess_pass
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chess_user -d chess_rl"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for caching and task queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      DATABASE_URL: postgresql://chess_user:chess_pass@postgres:5432/chess_rl
+      REDIS_URL: redis://redis:6379/0
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      DEBUG: "false"
+      MODEL_PATH: microsoft/DialoGPT-medium
+      STOCKFISH_PATH: /usr/games/stockfish
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../backend:/app/backend
+      - model_cache:/app/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Streamlit Frontend
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    environment:
+      API_BASE_URL: http://backend:8000
+      STREAMLIT_PORT: 8501
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    volumes:
+      - ../frontend:/app/frontend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Nginx Load Balancer (optional for production)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+    profiles:
+      - production
+
+  # Data Pipeline Runner (run once)
+  data-pipeline:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      DATABASE_URL: postgresql://chess_user:chess_pass@postgres:5432/chess_rl
+    command: python scripts/download_lichess_data.py --max-puzzles 10000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../data:/app/data
+      - ../scripts:/app/scripts
+    profiles:
+      - setup
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  model_cache:
+    driver: local
+
+networks:
+  default:
+    name: chess_rl_network

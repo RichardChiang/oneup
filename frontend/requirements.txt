@@ -1,0 +1,28 @@
+# Streamlit and UI
+streamlit==1.28.2
+streamlit-chat==0.1.1
+streamlit-extras==0.3.5
+
+# Chess visualization
+chess==1.999
+chess-board==0.3.0
+
+# HTTP client
+requests==2.31.0
+httpx==0.25.2
+
+# Data visualization
+plotly==5.17.0
+pandas==2.1.4
+numpy==1.24.4
+
+# Image processing
+Pillow==10.1.0
+
+# Configuration
+python-dotenv==1.0.0
+
+# Development
+pytest==7.4.3
+black==23.11.0
+isort==5.12.0

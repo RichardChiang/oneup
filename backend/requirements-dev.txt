@@ -1,0 +1,65 @@
+# Core FastAPI and async framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database and ORM
+sqlalchemy==2.0.23
+alembic==1.12.1
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+
+# Redis and caching
+redis==5.0.1
+aioredis==2.0.1
+
+# Chess engine and logic
+python-chess==1.999
+stockfish==3.28.0
+
+# ML and model serving (without VLLM for development)
+transformers==4.36.2
+torch==2.1.2
+accelerate==0.25.0
+
+# Task queue
+celery==5.3.4
+
+# HTTP client
+httpx==0.25.2
+aiofiles==23.2.1
+
+# Validation and serialization
+pydantic-extra-types==2.2.0
+email-validator==2.1.0
+
+# Rate limiting
+slowapi==0.1.9
+
+# Monitoring and logging
+structlog==23.2.0
+
+# Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+
+# Development and testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+black==23.11.0
+isort==5.12.0
+flake8==6.1.0
+
+# Configuration
+python-dotenv==1.0.0
+
+# Data processing
+pandas==2.1.4
+numpy==1.24.4
+tqdm==4.66.1
+
+# File handling
+aiofiles==23.2.1

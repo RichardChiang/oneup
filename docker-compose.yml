@@ -1,0 +1,234 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:15
+    container_name: chess_postgres
+    environment:
+      POSTGRES_DB: chess_rl
+      POSTGRES_USER: chess_user
+      POSTGRES_PASSWORD: chess_pass
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chess_user -d chess_rl"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - chess_network
+
+  # Redis cache
+  redis:
+    image: redis:7-alpine
+    container_name: chess_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - chess_network
+
+  # FastAPI backend
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: chess_backend
+    environment:
+      - DATABASE_URL=postgresql://chess_user:chess_pass@postgres:5432/chess_rl
+      - REDIS_URL=redis://redis:6379/0
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - DEBUG=false
+      - MODEL_PATH=microsoft/DialoGPT-medium
+      - STOCKFISH_PATH=/usr/bin/stockfish
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+      - model_cache:/app/models
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - chess_network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+  # Streamlit frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: chess_frontend
+    environment:
+      - API_BASE_URL=http://backend:8000
+      - STREAMLIT_PORT=8501
+    volumes:
+      - ./frontend:/app/frontend
+    ports:
+      - "8501:8501"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - chess_network
+
+  # Nginx reverse proxy (optional for production)
+  nginx:
+    image: nginx:alpine
+    container_name: chess_nginx
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf
+      - ./docker/ssl:/etc/nginx/ssl
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - chess_network
+    profiles:
+      - production
+
+  # Celery worker for background tasks
+  celery_worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: chess_celery
+    command: celery -A backend.tasks worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://chess_user:chess_pass@postgres:5432/chess_rl
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - chess_network
+    profiles:
+      - production
+
+  # Flower for Celery monitoring
+  flower:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: chess_flower
+    command: celery -A backend.tasks flower --port=5555
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - chess_network
+    profiles:
+      - production
+
+  # Prometheus monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: chess_prometheus
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - chess_network
+    profiles:
+      - monitoring
+
+  # Grafana dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: chess_grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - chess_network
+    profiles:
+      - monitoring
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  model_cache:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  chess_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
