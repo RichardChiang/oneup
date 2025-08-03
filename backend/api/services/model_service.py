@@ -19,7 +19,7 @@ from transformers import (
 )
 from threading import Thread
 
-from ...chess import ChessConverter
+from ...chess_utils import ChessConverter
 from ..models import ChatResponse
 
 logger = logging.getLogger(__name__)

@@ -124,6 +124,25 @@ class ChessInterface:
         
         if "board_position" not in st.session_state:
             st.session_state.board_position = None
+        
+        # Practice mode state
+        if "practice_mode" not in st.session_state:
+            st.session_state.practice_mode = False
+        
+        if "current_questions" not in st.session_state:
+            st.session_state.current_questions = []
+        
+        if "current_question_index" not in st.session_state:
+            st.session_state.current_question_index = 0
+        
+        if "practice_level" not in st.session_state:
+            st.session_state.practice_level = 1
+        
+        if "practice_score" not in st.session_state:
+            st.session_state.practice_score = {"correct": 0, "total": 0}
+        
+        if "answer_submitted" not in st.session_state:
+            st.session_state.answer_submitted = False
     
     async def get_random_puzzle(self, difficulty: Optional[int] = None) -> Optional[Dict]:
         """Fetch a random puzzle from the API."""
@@ -218,6 +237,42 @@ class ChessInterface:
             logger.error(f"Error fetching statistics: {e}")
             return {}
     
+    async def generate_questions(self, level: int, count: int = 3, fen: Optional[str] = None) -> Optional[List[Dict]]:
+        """Generate practice questions for the given level."""
+        try:
+            payload = {
+                "level": level,
+                "count": count
+            }
+            
+            if fen:
+                payload["fen"] = fen
+            
+            response = await self.api_client.post("/questions/generate", json=payload)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["questions"]
+            else:
+                st.error(f"Failed to generate questions: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error generating questions: {e}")
+            st.error(f"Error generating questions: {e}")
+            return None
+    
+    async def get_question_levels(self) -> Optional[Dict]:
+        """Get available question levels and types."""
+        try:
+            response = await self.api_client.get("/questions/levels")
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching question levels: {e}")
+            return None
+    
     def render_chess_board(self, fen: str, size: int = 400) -> str:
         """Render chess board from FEN position."""
         try:
@@ -277,9 +332,21 @@ class ChessInterface:
         st.title("♔ Chess AI Trainer")
         st.markdown("Interactive chess training with AI feedback and human-in-the-loop learning")
         
+        # Main tabs
+        tab1, tab2 = st.tabs(["💬 Chat Mode", "🎯 Practice Mode"])
+        
+        with tab1:
+            self.render_chat_mode()
+        
+        with tab2:
+            self.render_practice_mode()
+    
+    def render_chat_mode(self):
+        """Render the chat interface mode."""
+        
         # Sidebar
         with st.sidebar:
-            st.header("Controls")
+            st.header("Chat Controls")
             
             # Puzzle selection
             st.subheader("🎯 Puzzle Settings")
@@ -291,7 +358,7 @@ class ChessInterface:
                 help="Rating range for puzzles"
             )
             
-            if st.button("🎲 Get New Puzzle", use_container_width=True):
+            if st.button("🎲 Get New Puzzle", use_container_width=True, key="chat_new_puzzle"):
                 with st.spinner("Fetching puzzle..."):
                     # Use average of range as difficulty
                     avg_difficulty = sum(difficulty_range) // 2
@@ -317,7 +384,7 @@ class ChessInterface:
             st.text(f"Session: {self.session_id[:8]}...")
             st.text(f"Messages: {len(st.session_state.messages)}")
             
-            if st.button("🗑️ Clear History", use_container_width=True):
+            if st.button("🗑️ Clear History", use_container_width=True, key="chat_clear_history"):
                 st.session_state.messages = []
                 st.session_state.current_puzzle = None
                 st.session_state.board_position = None
@@ -372,10 +439,11 @@ class ChessInterface:
             fen_input = st.text_input(
                 "Enter FEN notation:",
                 placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                help="Enter a chess position in FEN notation"
+                help="Enter a chess position in FEN notation",
+                key="chat_fen_input"
             )
             
-            if fen_input and st.button("Load Position"):
+            if fen_input and st.button("Load Position", key="chat_load_position"):
                 try:
                     # Validate FEN
                     chess.Board(fen_input)
@@ -419,18 +487,18 @@ class ChessInterface:
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    if st.button("🔍 Analyze position", use_container_width=True):
+                    if st.button("🔍 Analyze position", use_container_width=True, key="chat_analyze"):
                         st.session_state.temp_message = "Please analyze this chess position in detail."
                     
-                    if st.button("🎯 Find the tactic", use_container_width=True):
+                    if st.button("🎯 Find the tactic", use_container_width=True, key="chat_tactic"):
                         st.session_state.temp_message = "What tactical opportunity exists in this position?"
                 
                 with col2:
-                    if st.button("📋 Explain themes", use_container_width=True):
+                    if st.button("📋 Explain themes", use_container_width=True, key="chat_themes"):
                         themes = st.session_state.current_puzzle.get("themes", [])
                         st.session_state.temp_message = f"Explain these chess themes: {', '.join(themes[:3])}"
                     
-                    if st.button("🎓 Best move?", use_container_width=True):
+                    if st.button("🎓 Best move?", use_container_width=True, key="chat_best_move"):
                         st.session_state.temp_message = "What is the best move in this position and why?"
             
             # Main input
@@ -449,11 +517,12 @@ class ChessInterface:
             col1, col2 = st.columns([3, 1])
             
             with col1:
-                send_button = st.button("🚀 Send Message", use_container_width=True, type="primary")
+                send_button = st.button("🚀 Send Message", use_container_width=True, type="primary", key="chat_send")
             
             with col2:
                 include_position = st.checkbox("Include position", value=True, 
-                                             disabled=not st.session_state.current_puzzle and not st.session_state.board_position)
+                                             disabled=not st.session_state.current_puzzle and not st.session_state.board_position,
+                                             key="chat_include_position")
             
             # Handle message sending
             if send_button and user_input.strip():
@@ -512,6 +581,268 @@ class ChessInterface:
                 - 🎯 Input custom positions via FEN
                 - 💬 Full conversation history maintained
                 """)
+    
+    def render_practice_mode(self):
+        """Render the practice mode interface with generated questions."""
+        
+        # Sidebar for practice mode
+        with st.sidebar:
+            st.header("Practice Controls")
+            
+            # Level selection
+            st.subheader("🎯 Difficulty Level")
+            
+            level_descriptions = {
+                1: "Level 1: Piece Counting",
+                2: "Level 2: Position Identification", 
+                3: "Level 3: Basic Tactics",
+                4: "Level 4: Strategic Analysis",
+                5: "Level 5: Complex Reasoning"
+            }
+            
+            selected_level = st.selectbox(
+                "Choose difficulty:",
+                options=[1, 2, 3, 4, 5],
+                format_func=lambda x: level_descriptions[x],
+                index=st.session_state.practice_level - 1,
+                key="practice_level_select"
+            )
+            
+            if selected_level != st.session_state.practice_level:
+                st.session_state.practice_level = selected_level
+                st.session_state.current_questions = []
+                st.session_state.current_question_index = 0
+                st.session_state.answer_submitted = False
+            
+            # Questions per session
+            questions_count = st.slider("Questions per session:", 1, 10, 5, key="practice_questions_count")
+            
+            # Generate questions button
+            if st.button("🚀 Start Practice Session", use_container_width=True, key="practice_start"):
+                with st.spinner("Generating questions..."):
+                    questions = asyncio.run(self.generate_questions(selected_level, questions_count))
+                    
+                    if questions:
+                        st.session_state.current_questions = questions
+                        st.session_state.current_question_index = 0
+                        st.session_state.practice_score = {"correct": 0, "total": 0}
+                        st.session_state.answer_submitted = False
+                        st.success(f"Generated {len(questions)} questions!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to generate questions. Please try again.")
+            
+            # Current progress
+            if st.session_state.current_questions:
+                st.subheader("📊 Session Progress")
+                
+                current_idx = st.session_state.current_question_index
+                total_questions = len(st.session_state.current_questions)
+                score = st.session_state.practice_score
+                
+                st.metric("Question", f"{current_idx + 1} / {total_questions}")
+                st.metric("Score", f"{score['correct']} / {score['total']}")
+                
+                if score['total'] > 0:
+                    accuracy = (score['correct'] / score['total']) * 100
+                    st.metric("Accuracy", f"{accuracy:.1f}%")
+                
+                # Progress bar
+                progress = (current_idx + (1 if st.session_state.answer_submitted else 0)) / total_questions
+                st.progress(progress)
+            
+            # Reset session button
+            if st.session_state.current_questions:
+                st.divider()
+                if st.button("🔄 Reset Session", use_container_width=True, key="practice_reset"):
+                    st.session_state.current_questions = []
+                    st.session_state.current_question_index = 0
+                    st.session_state.practice_score = {"correct": 0, "total": 0}
+                    st.session_state.answer_submitted = False
+                    st.rerun()
+        
+        # Main practice area
+        if not st.session_state.current_questions:
+            # Welcome screen
+            col1, col2, col3 = st.columns([1, 2, 1])
+            
+            with col2:
+                st.markdown("### 🎯 Welcome to Practice Mode!")
+                st.markdown("""
+                Practice Mode helps you improve your chess skills through progressive difficulty levels:
+                
+                **📚 Available Levels:**
+                - **Level 1**: Piece counting and basic material assessment
+                - **Level 2**: Position identification and piece locations
+                - **Level 3**: Basic tactical patterns and threats
+                - **Level 4**: Strategic analysis and planning
+                - **Level 5**: Complex reasoning and advanced concepts
+                
+                **🚀 How to Start:**
+                1. Select your difficulty level in the sidebar
+                2. Choose number of questions (1-10)
+                3. Click "Start Practice Session"
+                4. Answer each question and get instant feedback!
+                
+                **🏆 Track Your Progress:**
+                - See your accuracy and score in real-time
+                - Review explanations for each answer
+                - Advance to higher levels as you improve
+                """)
+                
+                # Get level information
+                level_info = asyncio.run(self.get_question_levels())
+                if level_info:
+                    with st.expander("📖 Level Details", expanded=False):
+                        levels = level_info.get("levels", {})
+                        for level_num, level_data in levels.items():
+                            st.markdown(f"**{level_data['name']}**: {level_data['description']}")
+        
+        else:
+            # Active practice session
+            current_question = st.session_state.current_questions[st.session_state.current_question_index]
+            
+            # Main content
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.subheader("♟️ Chess Position")
+                
+                # Display chess board
+                board_svg = self.render_chess_board(current_question["fen"])
+                st.markdown(
+                    f'<div class="chess-board">{board_svg}</div>', 
+                    unsafe_allow_html=True
+                )
+                
+                # Question info
+                st.info(f"**Level {current_question['level']}** - {current_question['question_type'].replace('_', ' ').title()}")
+            
+            with col2:
+                st.subheader("🤔 Question")
+                
+                # Display question
+                st.markdown(f"### {current_question['question_text']}")
+                
+                if not st.session_state.answer_submitted:
+                    # Answer input
+                    user_answer = st.text_input(
+                        "Your answer:",
+                        placeholder="Enter your answer...",
+                        key=f"answer_{st.session_state.current_question_index}"
+                    )
+                    
+                    col_submit, col_skip = st.columns([2, 1])
+                    
+                    with col_submit:
+                        submit_button = st.button("✅ Submit Answer", use_container_width=True, 
+                                                type="primary", key="practice_submit")
+                    
+                    with col_skip:
+                        skip_button = st.button("⏭️ Skip", use_container_width=True, key="practice_skip")
+                    
+                    # Handle answer submission
+                    if submit_button and user_answer.strip():
+                        # Check answer
+                        correct_answer = current_question["correct_answer"].lower().strip()
+                        user_answer_clean = user_answer.lower().strip()
+                        
+                        # Check against correct answer and alternatives
+                        alternatives = [alt.lower().strip() for alt in current_question.get("alternative_answers", [])]
+                        is_correct = (user_answer_clean == correct_answer or 
+                                    user_answer_clean in alternatives)
+                        
+                        # Update score
+                        st.session_state.practice_score["total"] += 1
+                        if is_correct:
+                            st.session_state.practice_score["correct"] += 1
+                        
+                        # Mark as submitted
+                        st.session_state.answer_submitted = True
+                        st.session_state.last_answer_correct = is_correct
+                        st.rerun()
+                    
+                    elif skip_button:
+                        # Skip question
+                        st.session_state.practice_score["total"] += 1
+                        st.session_state.answer_submitted = True
+                        st.session_state.last_answer_correct = False
+                        st.rerun()
+                
+                else:
+                    # Show results
+                    is_correct = st.session_state.last_answer_correct
+                    
+                    if is_correct:
+                        st.success("🎉 Correct!")
+                    else:
+                        st.error("❌ Incorrect")
+                    
+                    # Show correct answer
+                    st.markdown(f"**Correct Answer:** {current_question['correct_answer']}")
+                    
+                    # Show explanation if available
+                    if current_question.get("explanation"):
+                        st.markdown(f"**Explanation:** {current_question['explanation']}")
+                    
+                    # Navigation
+                    col_next, col_finish = st.columns([2, 1])
+                    
+                    is_last_question = st.session_state.current_question_index >= len(st.session_state.current_questions) - 1
+                    
+                    with col_next:
+                        if not is_last_question:
+                            if st.button("➡️ Next Question", use_container_width=True, 
+                                       type="primary", key="practice_next"):
+                                st.session_state.current_question_index += 1
+                                st.session_state.answer_submitted = False
+                                st.rerun()
+                        else:
+                            st.success("🏁 Session Complete!")
+                    
+                    with col_finish:
+                        if st.button("🏁 Finish Session", use_container_width=True, key="practice_finish"):
+                            # Show final results
+                            self.show_practice_results()
+                            st.session_state.current_questions = []
+                            st.session_state.current_question_index = 0
+                            st.session_state.answer_submitted = False
+                            st.rerun()
+    
+    def show_practice_results(self):
+        """Show final practice session results."""
+        score = st.session_state.practice_score
+        accuracy = (score['correct'] / score['total'] * 100) if score['total'] > 0 else 0
+        
+        st.balloons()
+        
+        # Results summary
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Questions Answered", score['total'])
+        
+        with col2:
+            st.metric("Correct Answers", score['correct'])
+        
+        with col3:
+            st.metric("Accuracy", f"{accuracy:.1f}%")
+        
+        # Performance feedback
+        if accuracy >= 80:
+            st.success("🌟 Excellent work! You're ready for the next level!")
+        elif accuracy >= 60:
+            st.info("👍 Good job! Keep practicing to improve further.")
+        else:
+            st.warning("📚 Keep studying! Try reviewing the fundamentals for this level.")
+        
+        # Encourage next steps
+        current_level = st.session_state.practice_level
+        if accuracy >= 80 and current_level < 5:
+            st.info(f"💡 Consider trying Level {current_level + 1} for a greater challenge!")
+            if st.button(f"🚀 Try Level {current_level + 1}", key="practice_advance_level"):
+                st.session_state.practice_level = current_level + 1
+                st.rerun()
 
 
 def main():

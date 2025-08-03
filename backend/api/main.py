@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
 from ..database import initialize_database, get_database, get_session_scope
-from ..chess import ChessConverter, ChessEngine
+from ..chess_utils.engine import ChessEngine
+from ..chess_utils.unicode_converter import ChessConverter
 from .models import (
     ChatRequest,
     ChatResponse,
@@ -28,12 +29,18 @@ from .models import (
     PuzzleResponse,
     HealthResponse,
     ModelInfo,
+    QuestionRequest,
+    QuestionResponse,
+    Question,
+    QuestionValidationRequest,
+    QuestionValidationResponse,
 )
 from .services import (
     ModelService,
     ConversationService,
     PuzzleService,
     FeedbackService,
+    QuestionService,
 )
 
 # Configure logging
@@ -83,13 +90,15 @@ model_service: Optional[ModelService] = None
 conversation_service: Optional[ConversationService] = None
 puzzle_service: Optional[PuzzleService] = None
 feedback_service: Optional[FeedbackService] = None
+question_service: Optional[QuestionService] = None
 chess_engine: Optional[ChessEngine] = None
+unicode_converter: Optional[ChessConverter] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management."""
-    global model_service, conversation_service, puzzle_service, feedback_service, chess_engine
+    global model_service, conversation_service, puzzle_service, feedback_service, question_service, chess_engine, unicode_converter
     
     logger.info("Starting chess RL training API...")
     
@@ -106,6 +115,10 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Chess engine initialized")
         
+        # Initialize unicode converter
+        unicode_converter = ChessConverter()
+        logger.info("Unicode converter initialized")
+        
         # Initialize services
         model_service = ModelService(
             model_path=settings.model_path,
@@ -116,6 +129,7 @@ async def lifespan(app: FastAPI):
         conversation_service = ConversationService(db)
         puzzle_service = PuzzleService(db)
         feedback_service = FeedbackService(db)
+        question_service = QuestionService(db, chess_engine, unicode_converter)
         
         logger.info("All services initialized successfully")
         
@@ -449,6 +463,126 @@ async def get_statistics():
     except Exception as e:
         logger.error(f"Statistics retrieval failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to get statistics")
+
+
+# Question generation endpoints
+@app.post("/questions/generate", response_model=QuestionResponse)
+async def generate_questions(request: QuestionRequest):
+    """Generate chess questions for training and practice."""
+    if not question_service:
+        raise HTTPException(status_code=503, detail="Question service not available")
+    
+    try:
+        response = await question_service.generate_questions(request)
+        
+        if response.total_generated == 0:
+            raise HTTPException(status_code=404, detail="No questions could be generated with the given criteria")
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Question generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate questions")
+
+
+@app.post("/questions/generate/{level}", response_model=QuestionResponse)
+async def generate_questions_by_level(
+    level: int,
+    count: int = 1,
+    fen: Optional[str] = None,
+    puzzle_id: Optional[str] = None,
+    question_type: Optional[str] = None
+):
+    """Generate questions for a specific difficulty level."""
+    if not question_service:
+        raise HTTPException(status_code=503, detail="Question service not available")
+    
+    if level < 1 or level > 5:
+        raise HTTPException(status_code=400, detail="Level must be between 1 and 5")
+    
+    if count < 1 or count > 10:
+        raise HTTPException(status_code=400, detail="Count must be between 1 and 10")
+    
+    try:
+        request = QuestionRequest(
+            level=level,
+            count=count,
+            fen=fen,
+            puzzle_id=puzzle_id,
+            question_type=question_type
+        )
+        
+        response = await question_service.generate_questions(request)
+        
+        if response.total_generated == 0:
+            raise HTTPException(status_code=404, detail="No questions could be generated with the given criteria")
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Question generation by level failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate questions")
+
+
+@app.post("/questions/validate", response_model=QuestionValidationResponse)
+async def validate_question(request: QuestionValidationRequest):
+    """Validate a generated question for quality and correctness."""
+    if not question_service:
+        raise HTTPException(status_code=503, detail="Question service not available")
+    
+    try:
+        validation_result = await question_service.validate_question(request.question)
+        return validation_result
+        
+    except Exception as e:
+        logger.error(f"Question validation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to validate question")
+
+
+@app.get("/questions/levels")
+async def get_question_levels():
+    """Get information about available question difficulty levels."""
+    if not question_service:
+        raise HTTPException(status_code=503, detail="Question service not available")
+    
+    try:
+        return {
+            "levels": question_service.level_definitions,
+            "total_levels": len(question_service.level_definitions),
+            "description": "Progressive difficulty levels for chess question generation"
+        }
+        
+    except Exception as e:
+        logger.error(f"Getting question levels failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get question levels")
+
+
+@app.get("/questions/types/{level}")
+async def get_question_types_for_level(level: int):
+    """Get available question types for a specific level."""
+    if not question_service:
+        raise HTTPException(status_code=503, detail="Question service not available")
+    
+    if level < 1 or level > 5:
+        raise HTTPException(status_code=400, detail="Level must be between 1 and 5")
+    
+    try:
+        level_info = question_service.level_definitions.get(level)
+        
+        if not level_info:
+            raise HTTPException(status_code=404, detail="Level not found")
+        
+        return {
+            "level": level,
+            "name": level_info["name"],
+            "description": level_info["description"],
+            "question_types": level_info["types"],
+            "total_types": len(level_info["types"])
+        }
+        
+    except Exception as e:
+        logger.error(f"Getting question types failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get question types")
 
 
 # Development endpoints (only in debug mode)

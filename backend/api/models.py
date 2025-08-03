@@ -274,3 +274,141 @@ class StatisticsResponse(BaseModel):
                 "uptime_seconds": 86400
             }
         }
+
+
+class QuestionRequest(BaseModel):
+    """Request model for question generation."""
+    
+    level: int = Field(..., ge=1, le=5, description="Difficulty level (1-5)")
+    fen: Optional[str] = Field(None, description="Specific chess position")
+    puzzle_id: Optional[str] = Field(None, description="Use specific puzzle")
+    question_type: Optional[str] = Field(None, description="Specific question type to generate")
+    count: int = Field(1, ge=1, le=10, description="Number of questions to generate")
+    
+    @validator("fen")
+    def validate_fen(cls, v):
+        """Validate FEN format if provided."""
+        if v is not None:
+            try:
+                import chess
+                chess.Board(v)
+            except Exception:
+                raise ValueError("Invalid FEN notation")
+        return v
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "level": 2,
+                "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                "count": 3,
+                "question_type": "piece_position"
+            }
+        }
+
+
+class Question(BaseModel):
+    """Individual generated question."""
+    
+    id: str = Field(..., description="Question unique identifier")
+    level: int = Field(..., description="Difficulty level")
+    question_type: str = Field(..., description="Type of question")
+    question_text: str = Field(..., description="The question to ask")
+    correct_answer: str = Field(..., description="Correct answer")
+    alternative_answers: List[str] = Field(default=[], description="Alternative acceptable answers")
+    fen: str = Field(..., description="Chess position for the question")
+    unicode_position: str = Field(..., description="Unicode representation")
+    explanation: Optional[str] = Field(None, description="Answer explanation")
+    difficulty_rating: Optional[int] = Field(None, description="Specific difficulty rating")
+    themes: List[str] = Field(default=[], description="Associated chess themes")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "id": "q_level2_001",
+                "level": 2,
+                "question_type": "piece_position", 
+                "question_text": "What piece is on the e1 square?",
+                "correct_answer": "White King",
+                "alternative_answers": ["King", "♔"],
+                "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                "unicode_position": "♜♞♝♛♚♝♞♜♟♟♟♟♟♟♟♟□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□♙♙♙♙♙♙♙♙♖♘♗♕♔♗♘♖",
+                "explanation": "In chess starting position, the white king is placed on e1.",
+                "themes": ["basics", "piece_identification"]
+            }
+        }
+
+
+class QuestionResponse(BaseModel):
+    """Response model for question generation."""
+    
+    questions: List[Question] = Field(..., description="Generated questions")
+    generation_time_ms: int = Field(..., description="Time to generate questions")
+    level: int = Field(..., description="Requested level")
+    total_generated: int = Field(..., description="Number of questions generated")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "questions": [
+                    {
+                        "id": "q_level1_001",
+                        "level": 1,
+                        "question_type": "piece_count",
+                        "question_text": "How many pawns does White have?",
+                        "correct_answer": "8",
+                        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                        "unicode_position": "♜♞♝♛♚♝♞♜♟♟♟♟♟♟♟♟□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□♙♙♙♙♙♙♙♙♖♘♗♕♔♗♘♖"
+                    }
+                ],
+                "generation_time_ms": 150,
+                "level": 1,
+                "total_generated": 1
+            }
+        }
+
+
+class QuestionValidationRequest(BaseModel):
+    """Request model for question validation."""
+    
+    question: Question = Field(..., description="Question to validate")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "question": {
+                    "id": "q_test_001",
+                    "level": 1,
+                    "question_type": "piece_count",
+                    "question_text": "How many pawns does White have?",
+                    "correct_answer": "8",
+                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    "unicode_position": "♜♞♝♛♚♝♞♜♟♟♟♟♟♟♟♟□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□♙♙♙♙♙♙♙♙♖♘♗♕♔♗♘♖"
+                }
+            }
+        }
+
+
+class QuestionValidationResponse(BaseModel):
+    """Response model for question validation."""
+    
+    is_valid: bool = Field(..., description="Whether question is valid")
+    validation_score: float = Field(..., description="Validation score (0-1)")
+    errors: List[str] = Field(default=[], description="Validation errors")
+    warnings: List[str] = Field(default=[], description="Validation warnings")
+    chess_validity: bool = Field(..., description="Chess position validity")
+    answer_correctness: bool = Field(..., description="Answer correctness")
+    difficulty_match: bool = Field(..., description="Difficulty level match")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "is_valid": True,
+                "validation_score": 0.95,
+                "errors": [],
+                "warnings": ["Answer could be more specific"],
+                "chess_validity": True,
+                "answer_correctness": True,
+                "difficulty_match": True
+            }
+        }

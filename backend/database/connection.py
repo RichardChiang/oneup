@@ -76,6 +76,10 @@ class DatabaseManager:
                 pool_recycle=3600,
             )
             
+            # Attach event listeners to sync engine
+            if "sqlite" in self.database_url:
+                event.listen(self._sync_engine, "connect", set_sqlite_pragma)
+            
             # Session factories
             self._session_factory = sessionmaker(
                 bind=self._sync_engine,
@@ -233,7 +237,7 @@ async def get_session_scope() -> AsyncGenerator[AsyncSession, None]:
 
 
 # Database event listeners for optimization
-@event.listens_for(create_engine, "connect")
+# Note: This will be attached to specific engine instances when created
 def set_sqlite_pragma(dbapi_connection, connection_record):
     """Set SQLite pragmas for better performance (if using SQLite)."""
     if "sqlite" in str(dbapi_connection):

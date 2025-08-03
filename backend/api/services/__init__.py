@@ -8,10 +8,12 @@ from .model_service import ModelService
 from .conversation_service import ConversationService
 from .puzzle_service import PuzzleService
 from .feedback_service import FeedbackService
+from .question_service import QuestionService
 
 __all__ = [
     "ModelService",
     "ConversationService", 
     "PuzzleService",
     "FeedbackService",
+    "QuestionService",
 ]
